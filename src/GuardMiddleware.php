@@ -10,19 +10,39 @@ use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Closure;
 use RenzoFranceschini\GuardCore\Engine\GuardEngine;
+use RenzoFranceschini\GuardCore\GeoIp\CountryResolver;
 use RenzoFranceschini\GuardCore\Redis\GuardRedisException;
+use RenzoFranceschini\GuardCore\Request\GuardResponse;
+use RenzoFranceschini\GuardCore\Routing\RouteConfig;
 
 final class GuardMiddleware implements MiddlewareInterface
 {
     private readonly ResponseTranslator $translator;
 
+    /**
+     * @param array<string, RouteConfig> $routes route pattern => config,
+     *     resolved per request by path match and attached to the engine's
+     *     request state before the pipeline runs (per-route behavior rules,
+     *     detection exclusions, rate-limit tiers and check bypasses)
+     * @param (\Closure(ServerRequestInterface): RouteConfig|null)|null $routeResolver
+     *     custom resolver; takes precedence over the static pattern map
+     * @param CountryResolver|null $geoRateLimitResolver country resolver for
+     *     RouteConfig geoRateLimits tiers; falls back to the engine
+     *     config's geo_ip_handler when that carries one (the config keeps
+     *     an injected handler only when country lists are configured)
+     */
     public function __construct(
         private readonly GuardEngine $engine,
         ResponseFactoryInterface $responseFactory,
-        StreamFactoryInterface $streamFactory
+        StreamFactoryInterface $streamFactory,
+        private readonly array $routes = [],
+        private readonly ?Closure $routeResolver = null,
+        ?CountryResolver $geoRateLimitResolver = null
     ) {
         $this->translator = new ResponseTranslator($responseFactory, $streamFactory);
+        $this->wireGeoRateLimitResolver($geoRateLimitResolver);
         try {
             $engine->initialize();
         } catch (GuardRedisException $e) {
@@ -34,8 +54,11 @@ final class GuardMiddleware implements MiddlewareInterface
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        $guardRequest = new PsrGuardRequest($request);
+        $this->attachRouteConfig($guardRequest);
+
         try {
-            $blocked = $this->engine->execute(new PsrGuardRequest($request));
+            $blocked = $this->engine->execute($guardRequest);
         } catch (\Throwable) {
             return $this->translator->translate($this->engine->failClosedResponse());
         }
@@ -44,6 +67,99 @@ final class GuardMiddleware implements MiddlewareInterface
             return $this->translator->translate($blocked);
         }
 
-        return $handler->handle($request);
+        return $this->finish($guardRequest, $handler->handle($request));
+    }
+
+    /**
+     * Pass-through response finish, mirroring the reference response
+     * factory's process_response phase (guard_core/core/responses/
+     * factory.py): the behavioral return rules run against the status code
+     * and the leading body prefix the handler produced (body captured from
+     * the PSR-7 stream only while behavior_scan_response_body is on,
+     * bounded by behavior_max_response_body_inspect_bytes; the stream is
+     * rewound after the capture when it is seekable, so emitters still see
+     * the full body; return rules never modify the response), then the
+     * engine's security-header set and the CORS verdict headers are merged
+     * onto the outgoing response (CORS wins on a shared name, matching the
+     * reference _inject_cors_headers ordering).
+     */
+    private function finish(PsrGuardRequest $guardRequest, ResponseInterface $response): ResponseInterface
+    {
+        $config = $this->engine->config();
+        $body = null;
+        if ($config->behaviorScanResponseBody) {
+            $stream = $response->getBody();
+            $seekable = $stream->isSeekable();
+            if ($seekable) {
+                $stream->rewind();
+            }
+            $body = $stream->read($config->behaviorMaxResponseBodyInspectBytes);
+            if ($seekable) {
+                $stream->rewind();
+            }
+        }
+        $this->engine->processResponse(
+            $guardRequest,
+            new GuardResponse($response->getStatusCode(), body: $body)
+        );
+
+        foreach ($this->engine->responseHeaders() as $name => $value) {
+            $response = $response->withHeader($name, $value);
+        }
+        foreach ($this->engine->corsResponseHeaders($guardRequest) as $name => $value) {
+            $response = $response->withHeader($name, $value);
+        }
+
+        return $response;
+    }
+
+    private function attachRouteConfig(PsrGuardRequest $guardRequest): void
+    {
+        $routeConfig = $this->resolveRouteConfig($guardRequest);
+        if ($routeConfig === null) {
+            return;
+        }
+        $guardRequest->state()->routeConfig = $routeConfig;
+    }
+
+    private function resolveRouteConfig(PsrGuardRequest $guardRequest): ?RouteConfig
+    {
+        if ($this->routeResolver !== null) {
+            return ($this->routeResolver)($guardRequest->underlying());
+        }
+
+        foreach ($this->routes as $pattern => $routeConfig) {
+            if (self::matchesRoutePattern($pattern, $guardRequest->urlPath())) {
+                return $routeConfig;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Path match with the engine's exclude-paths convention: the pattern
+     * matches the path exactly, or as a prefix when it ends with '/'.
+     */
+    private static function matchesRoutePattern(string $pattern, string $path): bool
+    {
+        return $pattern === $path || (str_ends_with($pattern, '/') && str_starts_with($path, $pattern));
+    }
+
+    /**
+     * Geo rate-limit tiers (RouteConfig geoRateLimits) activate only when a
+     * resolver is configured on the engine's rate-limit handler; the engine
+     * does not wire one itself, so the adapter bridges the config's
+     * geo_ip_handler into it at construction.
+     */
+    private function wireGeoRateLimitResolver(?CountryResolver $explicit): void
+    {
+        $geoIpHandler = $explicit ?? $this->engine->config()->geoIpHandler;
+        if ($geoIpHandler === null) {
+            return;
+        }
+        $this->engine->rateLimitHandler()->setGeoResolver(
+            static fn (string $ip): string => (string) ($geoIpHandler->getCountry($ip) ?? '')
+        );
     }
 }

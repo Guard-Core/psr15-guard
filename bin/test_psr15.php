@@ -333,7 +333,26 @@ $t->same('Forbidden', (string) $blocked->getBody(), '403 body exact');
 $headers = array_change_key_case($blocked->getHeaders(), CASE_LOWER);
 $t->same(['text/plain; charset=utf-8'], $headers['content-type'] ?? [], 'block response content type explicit');
 unset($headers['content-type']);
-$t->same([], $headers, 'no unexpected headers on plain block (later sections)');
+// guard-core-php parity: error responses carry the engine default security
+// headers (Python reference guard_core/core/responses/factory.py applies
+// apply_security_headers inside create_error_response).
+$securityHeaderKeys = [
+    'x-content-type-options',
+    'x-frame-options',
+    'x-xss-protection',
+    'referrer-policy',
+    'permissions-policy',
+    'x-permitted-cross-domain-policies',
+    'x-download-options',
+    'cross-origin-embedder-policy',
+    'cross-origin-opener-policy',
+    'cross-origin-resource-policy',
+    'strict-transport-security',
+];
+$missing = array_diff_key(array_flip($securityHeaderKeys), $headers);
+$t->same([], $missing, 'engine default security headers present on plain block');
+$extra = array_diff_key($headers, array_flip($securityHeaderKeys));
+$t->same([], $extra, 'no unexpected headers on plain block (later sections)');
 $t->same(0, $handler->calls, 'handler not called on block');
 $t->same('ip_security', $hooks[0]['check_name'] ?? null, 'on_block check_name');
 $t->same('IP blacklisted: 192.0.2.66', $hooks[0]['reason'] ?? null, 'on_block reason');

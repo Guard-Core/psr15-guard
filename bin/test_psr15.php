@@ -15,6 +15,7 @@ use RenzoFranceschini\GuardCore\Engine\GuardEngine;
 use RenzoFranceschini\GuardCore\Request\GuardRequest;
 use RenzoFranceschini\GuardCore\Request\GuardResponse;
 use RenzoFranceschini\GuardCore\Redis\RedisHandler;
+use RenzoFranceschini\GuardCore\Routing\RouteConfig;
 use RenzoFranceschini\GuardCorePsr15\GuardMiddleware;
 use RenzoFranceschini\GuardCorePsr15\PsrGuardRequest;
 
@@ -78,6 +79,18 @@ final class RecordingHandler implements RequestHandlerInterface
         $this->seen = $request;
 
         return (new Psr17Factory())->createResponse(200)->withBody((new Psr17Factory())->createStream('downstream'));
+    }
+}
+
+final class RecordingHandlerWithResponse implements RequestHandlerInterface
+{
+    public function __construct(private readonly ResponseInterface $response)
+    {
+    }
+
+    public function handle(ServerRequestInterface $request): ResponseInterface
+    {
+        return $this->response;
     }
 }
 
@@ -235,6 +248,18 @@ final class ThrowingUriRequest implements ServerRequestInterface
     public function withUploadedFiles(array $uploadedFiles): static
     {
         return new static($this->inner->withUploadedFiles($uploadedFiles));
+    }
+}
+
+final class FakeCountryResolver implements \RenzoFranceschini\GuardCore\GeoIp\CountryResolver
+{
+    public function __construct(private readonly ?string $country)
+    {
+    }
+
+    public function getCountry(string $ip): ?string
+    {
+        return $this->country;
     }
 }
 
@@ -513,7 +538,187 @@ $middleware = new GuardMiddleware($engine, $factory, $factory);
 $openPass = $middleware->process(psrRequest('/x', '203.0.113.81'), new RecordingHandler());
 $t->same(200, $openPass->getStatusCode(), 'redis down + redis_fail_open=true: construction survives, request passes (bounded fail-open)');
 
+$t->section('pass-through security headers (engine responseHeaders on the way out)');
+$config = new SecurityConfig(enableRedis: false, enablePenetrationDetection: false);
+[$middleware] = makeStack($config);
+$next = new RecordingHandler();
+$passed = $middleware->process(psrRequest('/page', '203.0.113.110'), $next);
+$t->same(200, $passed->getStatusCode(), 'pass-through status preserved');
+$t->same('downstream', (string) $passed->getBody(), 'pass-through body preserved');
+$missing = array_diff_key(array_flip($securityHeaderKeys), array_change_key_case($passed->getHeaders(), CASE_LOWER));
+$t->same([], $missing, 'engine default security headers applied to the pass-through response');
+$config = new SecurityConfig(enableRedis: false, enablePenetrationDetection: false, securityHeaders: ['enabled' => false]);
+[$middleware] = makeStack($config);
+$passed = $middleware->process(psrRequest('/page', '203.0.113.111'), new RecordingHandler());
+$t->same(true, array_diff_key(array_flip($securityHeaderKeys), array_change_key_case($passed->getHeaders(), CASE_LOWER)) !== [], 'headers disabled: no engine security headers on the pass-through response');
+
+$t->section('pass-through CORS response headers');
+$config = new SecurityConfig(enableRedis: false, enablePenetrationDetection: false, enableCors: true, corsAllowOrigins: ['https://app.test']);
+[$middleware] = makeStack($config);
+$passed = $middleware->process(psrRequest('/page', '203.0.113.120', 'GET', '', '', ['Origin' => 'https://app.test']), new RecordingHandler());
+$t->same(['https://app.test'], $passed->getHeader('Access-Control-Allow-Origin'), 'allowed origin echoed onto the pass-through response');
+$noOrigin = $middleware->process(psrRequest('/page', '203.0.113.121'), new RecordingHandler());
+$t->same([], $noOrigin->getHeader('Access-Control-Allow-Origin'), 'no Origin header: no CORS headers on the pass-through response');
+$disallowed = $middleware->process(psrRequest('/page', '203.0.113.122', 'GET', '', '', ['Origin' => 'https://evil.test']), new RecordingHandler());
+$t->same([], $disallowed->getHeader('Access-Control-Allow-Origin'), 'disallowed origin: no CORS headers on the pass-through response');
+
+$t->section('behavior return rules over the pass-through response');
+$psr17 = new Psr17Factory();
+$config = new SecurityConfig(
+    enableRedis: false,
+    enablePenetrationDetection: false,
+    globalBehaviorRules: [['rule_type' => 'return_pattern', 'threshold' => 1, 'pattern' => 'status:404', 'action' => 'ban', 'window' => 60]]
+);
+[$middleware] = makeStack($config);
+$notFound = $psr17->createResponse(404)->withBody($psr17->createStream('nope'));
+$middleware->process(psrRequest('/missing', '203.0.113.130'), new RecordingHandlerWithResponse($notFound));
+$middleware->process(psrRequest('/missing', '203.0.113.130'), new RecordingHandlerWithResponse($notFound));
+$banned = $middleware->process(psrRequest('/missing', '203.0.113.130'), new RecordingHandler());
+$t->same(403, $banned->getStatusCode(), 'status-only return rule banned the ip (threshold trips strictly greater)');
+$t->ok(str_contains((string) $banned->getBody(), 'banned'), 'ban body reports the ban');
+
+$t->section('return rules with body patterns: scan flag and inspect-bytes budget');
+$marker = 'leaked-secret-trailer';
+$baseRules = [['rule_type' => 'return_pattern', 'threshold' => 1, 'pattern' => $marker, 'action' => 'ban', 'window' => 60]];
+$config = new SecurityConfig(
+    enableRedis: false,
+    enablePenetrationDetection: false,
+    behaviorScanResponseBody: true,
+    behaviorMaxResponseBodyInspectBytes: 1024,
+    globalBehaviorRules: $baseRules
+);
+[$middleware] = makeStack($config);
+$inside = $psr17->createResponse(200)->withBody($psr17->createStream(str_repeat('a', 900) . $marker));
+$middleware->process(psrRequest('/report', '203.0.113.131'), new RecordingHandlerWithResponse($inside));
+$middleware->process(psrRequest('/report', '203.0.113.131'), new RecordingHandlerWithResponse($inside));
+$banned = $middleware->process(psrRequest('/report', '203.0.113.131'), new RecordingHandler());
+$t->same(403, $banned->getStatusCode(), 'body pattern inside the inspect budget triggered the ban');
+
+$config = new SecurityConfig(
+    enableRedis: false,
+    enablePenetrationDetection: false,
+    behaviorScanResponseBody: true,
+    behaviorMaxResponseBodyInspectBytes: 1024,
+    globalBehaviorRules: $baseRules
+);
+[$middleware] = makeStack($config);
+$edge = $psr17->createResponse(200)->withBody($psr17->createStream(str_repeat('a', 1024) . $marker));
+$passed = $middleware->process(psrRequest('/report', '203.0.113.132'), new RecordingHandlerWithResponse($edge));
+$t->same(200, $passed->getStatusCode(), 'marker at the budget edge stays unflagged');
+$t->same(str_repeat('a', 1024) . $marker, (string) $passed->getBody(), 'body fully re-readable after the bounded capture');
+$t->same(200, $middleware->process(psrRequest('/report', '203.0.113.132'), new RecordingHandler())->getStatusCode(), 'pattern beyond the inspect budget never triggers');
+
+$config = new SecurityConfig(
+    enableRedis: false,
+    enablePenetrationDetection: false,
+    behaviorScanResponseBody: true,
+    behaviorMaxResponseBodyInspectBytes: 1024,
+    globalBehaviorRules: $baseRules
+);
+[$middleware] = makeStack($config);
+$bigBody = str_repeat('a', 5000) . $marker;
+$big = $psr17->createResponse(200)->withBody($psr17->createStream($bigBody));
+$passed = $middleware->process(psrRequest('/report', '203.0.113.133'), new RecordingHandlerWithResponse($big));
+$t->same(strlen($bigBody), strlen((string) $passed->getBody()), 'large pass-through body not truncated by the capture');
+$t->throws(
+    \InvalidArgumentException::class,
+    static function () use ($baseRules): void {
+        new SecurityConfig(enableRedis: false, globalBehaviorRules: $baseRules, behaviorScanResponseBody: false);
+    },
+    'body pattern with scan off rejected at config construction'
+);
+
+$t->section('per-route config through the middleware route map');
+$hooks = [];
+$routeConfig = new RouteConfig(enableSuspiciousDetection: false);
+$factory = new Psr17Factory();
+$middleware = new GuardMiddleware(
+    new GuardEngine(new SecurityConfig(enableRedis: false, onBlock: hookCapture($hooks))),
+    $factory,
+    $factory,
+    routes: ['/open/' => $routeConfig]
+);
+$open = $middleware->process(psrRequest('/open/section', '203.0.113.140', 'GET', $attackQuery), new RecordingHandler());
+$t->same(200, $open->getStatusCode(), 'attack on a route with detection disabled passes');
+$guarded = $middleware->process(psrRequest('/search', '203.0.113.140', 'GET', $attackQuery), new RecordingHandler());
+$t->same(400, $guarded->getStatusCode(), 'same attack on an unconfigured route still blocks');
+
+$hooks = [];
+$config = new SecurityConfig(enableRedis: false, onBlock: hookCapture($hooks));
+$routeConfig = new RouteConfig(behaviorRules: [new \RenzoFranceschini\GuardCore\Behavior\BehaviorRule('usage', 1, window: 60, action: 'ban')]);
+$middleware = new GuardMiddleware(new GuardEngine($config), $factory, $factory, routes: ['/chatty/' => $routeConfig]);
+$middleware->process(psrRequest('/chatty/feed', '203.0.113.141'), new RecordingHandler());
+$middleware->process(psrRequest('/chatty/feed', '203.0.113.141'), new RecordingHandler());
+$banned = $middleware->process(psrRequest('/chatty/feed', '203.0.113.141'), new RecordingHandler());
+$t->same(403, $banned->getStatusCode(), 'route usage rule banned the ip after the threshold');
+
+$seenPath = null;
+$config = new SecurityConfig(enableRedis: false);
+$middleware = new GuardMiddleware(
+    new GuardEngine($config),
+    $factory,
+    $factory,
+    routeResolver: static function (ServerRequestInterface $request) use (&$seenPath): ?RouteConfig {
+        $seenPath = $request->getUri()->getPath();
+
+        return $request->getUri()->getPath() === '/dynamic' ? new RouteConfig(enableSuspiciousDetection: false) : null;
+    }
+);
+$dynamic = $middleware->process(psrRequest('/dynamic', '203.0.113.142', 'GET', $attackQuery), new RecordingHandler());
+$t->same('/dynamic', $seenPath, 'custom resolver received the raw PSR-7 request');
+$t->same(200, $dynamic->getStatusCode(), 'custom resolver route skips detection');
+$static = $middleware->process(psrRequest('/search', '203.0.113.143', 'GET', $attackQuery), new RecordingHandler());
+$t->same(400, $static->getStatusCode(), 'custom resolver returning null keeps global enforcement');
+
+$t->section('geo country config through the public adapter surface');
+$hooks = [];
+$config = new SecurityConfig(
+    enableRedis: false,
+    enablePenetrationDetection: false,
+    blockedCountries: ['CN'],
+    geoIpHandler: new FakeCountryResolver('CN'),
+    onBlock: hookCapture($hooks)
+);
+[$middleware] = makeStack($config);
+$blockedCountry = $middleware->process(psrRequest('/download', '203.0.113.150'), new RecordingHandler());
+$t->same(403, $blockedCountry->getStatusCode(), 'blocked country -> 403 through the adapter');
+$t->same('Forbidden', (string) $blockedCountry->getBody(), 'country block body exact');
+$config = new SecurityConfig(
+    enableRedis: false,
+    enablePenetrationDetection: false,
+    whitelistCountries: ['DE'],
+    geoIpHandler: new FakeCountryResolver('CN')
+);
+[$middleware] = makeStack($config);
+$notAllowed = $middleware->process(psrRequest('/download', '203.0.113.151'), new RecordingHandler());
+$t->same(403, $notAllowed->getStatusCode(), 'country outside the allowlist -> 403');
+$config = new SecurityConfig(
+    enableRedis: false,
+    enablePenetrationDetection: false,
+    whitelistCountries: ['DE'],
+    geoIpHandler: new FakeCountryResolver('DE')
+);
+[$middleware] = makeStack($config);
+$allowedCountry = $middleware->process(psrRequest('/download', '203.0.113.152'), new RecordingHandler());
+$t->same(200, $allowedCountry->getStatusCode(), 'allowlisted country passes');
+
+$t->section('geo rate-limit tiers via the config geo resolver bridge');
+$config = new SecurityConfig(enableRedis: false, enablePenetrationDetection: false);
+$middleware = new GuardMiddleware(
+    new GuardEngine($config),
+    $factory,
+    $factory,
+    routes: ['/geo/' => new RouteConfig(geoRateLimits: ['CN' => ['limit' => 1, 'window' => 60]])],
+    geoRateLimitResolver: new FakeCountryResolver('CN')
+);
+$geoReq = psrRequest('/geo/data', '203.0.113.160');
+$t->same(200, $middleware->process($geoReq, new RecordingHandler())->getStatusCode(), 'geo tier hit 1 passes');
+$limited = $middleware->process(psrRequest('/geo/data', '203.0.113.160'), new RecordingHandler());
+$t->same(429, $limited->getStatusCode(), 'geo tier hit 2 -> 429');
+$t->same(['60'], $limited->getHeader('Retry-After'), 'geo tier Retry-After carries the tier window');
+
 $t->section('integration: shared state over real redis');
+
 $integration = getenv('REDIS_HOST') !== '0';
 if ($integration) {
     $host = getenv('REDIS_HOST') ?: '127.0.0.1';

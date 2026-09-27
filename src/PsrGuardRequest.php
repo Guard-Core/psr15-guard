@@ -118,4 +118,13 @@ final class PsrGuardRequest implements GuardRequest
     {
         return $this->state;
     }
+
+    /**
+     * The wrapped PSR-7 server request, for adapter resolvers that inspect
+     * framework-native surfaces (routing results, attributes, ...).
+     */
+    public function underlying(): ServerRequestInterface
+    {
+        return $this->request;
+    }
 }

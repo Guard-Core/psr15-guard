@@ -777,4 +777,36 @@ function runRedisIntegration(T $t): void
 $total = $t->passed + $t->failed;
 echo "\nPassed: {$t->passed}, Failed: {$t->failed}\n";
 echo "{$t->passed}/{$total}" . ($t->failed === 0 ? ' GREEN' : ' RED') . "\n";
+
+// === Parity: longest-path route config, agent wiring, status handler ===
+$engineP = new GuardEngine(new SecurityConfig(enableRedis: false));
+$engineP->initialize();
+$specific = new RouteConfig(rateLimit: 2, rateLimitWindow: 60);
+$general = new RouteConfig();
+$mwP = new GuardMiddleware(
+    $engineP,
+    $factory,
+    $factory,
+    routes: ['/api/' => $general, '/api/orders' => $specific],
+    agentHandler: new class {
+        public array $events = [];
+        public function sendEvent(object $event): void
+        {
+            $this->events[] = $event;
+        }
+    }
+);
+$reflect = new ReflectionClass($mwP);
+$sorted = $reflect->getProperty('sortedRoutes')->getValue($mwP);
+$t->same(['/api/orders', '/api/'], array_keys($sorted), 'routes sort most-specific-first regardless of insertion order');
+$resolve = $reflect->getMethod('resolveRouteConfig');
+$psrReq = (new Nyholm\Psr7\ServerRequest('GET', 'http://test/api/orders'))
+    ->withAddedHeader('x-forwarded-for', '203.0.113.9');
+$guardReq = new PsrGuardRequest($psrReq);
+$t->same($specific, $resolve->invoke($mwP, $guardReq), 'longest pattern wins for /api/orders');
+$statusHandler = new \RenzoFranceschini\GuardCorePsr15\GuardStatusRequestHandler($engineP, $factory, $factory);
+$statusResp = $statusHandler->handle($psrReq);
+$payload = json_decode((string) $statusResp->getBody(), true);
+$t->ok(isset($payload['redis']), 'status handler serves initialization status JSON');
+
 exit($t->failed === 0 ? 0 : 1);

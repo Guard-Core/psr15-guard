@@ -6,6 +6,7 @@ namespace RenzoFranceschini\GuardCorePsr15;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ResponseFactoryInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use RenzoFranceschini\GuardCore\Engine\GuardEngine;
@@ -27,7 +28,7 @@ final class GuardStatusRequestHandler implements RequestHandlerInterface
     ) {
     }
 
-    public function handle($request): ResponseInterface
+    public function handle(ServerRequestInterface $request): ResponseInterface
     {
         $payload = json_encode($this->engine->initializationStatus(), JSON_THROW_ON_ERROR);
         $stream = $this->streamFactory->createStream($payload);

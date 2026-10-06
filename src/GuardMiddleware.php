@@ -21,6 +21,9 @@ final class GuardMiddleware implements MiddlewareInterface
 {
     private readonly ResponseTranslator $translator;
 
+    /** @var array<string, RouteConfig> route patterns sorted most-specific-first */
+    private array $sortedRoutes = [];
+
     /**
      * @param array<string, RouteConfig> $routes route pattern => config,
      *     resolved per request by path match and attached to the engine's
@@ -33,8 +36,6 @@ final class GuardMiddleware implements MiddlewareInterface
      *     config's geo_ip_handler when that carries one (the config keeps
      *     an injected handler only when country lists are configured)
      */
-    private array $sortedRoutes = [];
-
     public function __construct(
         private readonly GuardEngine $engine,
         ResponseFactoryInterface $responseFactory,
@@ -125,6 +126,9 @@ final class GuardMiddleware implements MiddlewareInterface
      * when several patterns match a path the longest (most specific) wins
      * regardless of the order the user supplied them in. Mirrors the TS
      * resolver's longest-path rule and the reference adapter's semantics.
+     *
+     * @param array<string, RouteConfig> $routes route pattern => config
+     * @return array<string, RouteConfig> the same map, longest pattern first
      */
     private static function sortRoutesLongestFirst(array $routes): array
     {

@@ -798,7 +798,7 @@ $mwP = new GuardMiddleware(
 );
 $reflect = new ReflectionClass($mwP);
 $sorted = $reflect->getProperty('sortedRoutes')->getValue($mwP);
-$t->same(['/api/orders', '/api/'], array_keys($sorted), 'routes sort most-specific-first regardless of insertion order');
+$t->same(['/api/orders', '/api/'], array_map(static fn (array $entry): string => $entry['path'], $sorted), 'routes sort most-specific-first regardless of insertion order');
 $resolve = $reflect->getMethod('resolveRouteConfig');
 $psrReq = (new Nyholm\Psr7\ServerRequest('GET', 'http://test/api/orders'))
     ->withAddedHeader('x-forwarded-for', '203.0.113.9');
@@ -808,5 +808,60 @@ $statusHandler = new \RenzoFranceschini\GuardCorePsr15\GuardStatusRequestHandler
 $statusResp = $statusHandler->handle($psrReq);
 $payload = json_decode((string) $statusResp->getBody(), true);
 $t->ok(isset($payload['redis']), 'status handler serves initialization status JSON');
+
+// === Parity: agent_stats, reset, refresh_cloud_ip_ranges, method-scoped routes ===
+
+$t->section('agent_stats accessor');
+$noAgentMw = new GuardMiddleware(new GuardEngine(new SecurityConfig(enableRedis: false)), $factory, $factory);
+$t->same(['enabled' => false, 'degraded' => false], $noAgentMw->agentStats(), 'no handler reports disabled');
+$statsMw = new GuardMiddleware(new GuardEngine(new SecurityConfig(enableRedis: false)), $factory, $factory, agentHandler: new class {
+    public function sendEvent(object $event): void
+    {
+    }
+
+    public function getStats(): array
+    {
+        return ['buffer_size' => 2, 'degraded' => true];
+    }
+});
+$stats = $statsMw->agentStats();
+$t->same(true, $stats['enabled'], 'a handler reports enabled');
+$t->same(2, $stats['buffer_size'], 'the handler stats flow through');
+$bareMw = new GuardMiddleware(new GuardEngine(new SecurityConfig(enableRedis: false)), $factory, $factory, agentHandler: new class {
+    public function sendEvent(object $event): void
+    {
+    }
+});
+$t->same(['enabled' => true, 'degraded' => false], $bareMw->agentStats(), 'a handler without getStats reports the enabled pair only');
+
+$t->section('middleware reset');
+$resetMw = new GuardMiddleware(new GuardEngine(new SecurityConfig(enableRedis: false)), $factory, $factory);
+$resetMw->reset();
+$t->ok(true, 'reset runs without redis (state cleared, no distributed keys to flush)');
+
+$t->section('refresh_cloud_ip_ranges');
+$noCloudMw = new GuardMiddleware(new GuardEngine(new SecurityConfig(enableRedis: false)), $factory, $factory);
+$noCloudMw->refreshCloudIpRanges();
+$t->ok(true, 'cloud blocking off: refresh is a no-op');
+$cloudMw = new GuardMiddleware(
+    new GuardEngine(
+        new SecurityConfig(enableRedis: false, blockCloudProviders: ['AWS']),
+        cloudManager: new \RenzoFranceschini\GuardCore\Cloud\CloudManager(null, new \RenzoFranceschini\GuardCore\Cloud\InMemoryCloudIpStore())
+    ),
+    $factory,
+    $factory
+);
+$cloudMw->refreshCloudIpRanges();
+$t->ok(true, 'cloud blocking on: refresh runs against the store (fetch failures log, never raise)');
+
+$t->section('method-scoped route patterns');
+$mMw = new GuardMiddleware(new GuardEngine(new SecurityConfig(enableRedis: false)), $factory, $factory, routes: ['GET /api' => $getOnly = new RouteConfig(requireHttps: true), '/api' => $anyMethod = new RouteConfig()]);
+$mResolve = (new ReflectionClass($mMw))->getMethod('resolveRouteConfig');
+$t->same($getOnly, $mResolve->invoke($mMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('GET', 'http://test/api'))), 'the method-scoped pattern wins for GET');
+$t->same($anyMethod, $mResolve->invoke($mMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('POST', 'http://test/api'))), 'the bare pattern answers other methods');
+$mixedMw = new GuardMiddleware(new GuardEngine(new SecurityConfig(enableRedis: false)), $factory, $factory, routes: ['/api/users' => $anyMethod, 'POST /api' => $getOnly]);
+$mixedResolve = (new ReflectionClass($mixedMw))->getMethod('resolveRouteConfig');
+$t->same($anyMethod, $mixedResolve->invoke($mixedMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('POST', 'http://test/api/users'))), 'a longer bare pattern beats a shorter method-scoped one');
+$t->same(null, $mixedResolve->invoke($mixedMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('GET', 'http://test/other'))), 'no match attaches nothing');
 
 exit($t->failed === 0 ? 0 : 1);

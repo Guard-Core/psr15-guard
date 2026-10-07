@@ -871,7 +871,7 @@ $hdrRequest = new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('GET', 'http://t
 $plainHeaders = $hdrEngine->responseHeaders();
 $requestHeaders = $hdrEngine->responseHeaders($hdrRequest);
 $t->same($plainHeaders, $requestHeaders, 'the guard request does not change the header set');
-$t->truthy($requestHeaders !== [], 'the default header set is non-empty');
+$t->ok($requestHeaders !== [], 'the default header set is non-empty');
 
 
 exit($t->failed === 0 ? 0 : 1);

@@ -864,4 +864,14 @@ $mixedResolve = (new ReflectionClass($mixedMw))->getMethod('resolveRouteConfig')
 $t->same($anyMethod, $mixedResolve->invoke($mixedMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('POST', 'http://test/api/users'))), 'a longer bare pattern beats a shorter method-scoped one');
 $t->same(null, $mixedResolve->invoke($mixedMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('GET', 'http://test/other'))), 'no match attaches nothing');
 
+$t->section('responseHeaders carries the guard request');
+$hdrEngine = new GuardEngine(new SecurityConfig(enableRedis: false));
+$hdrEngine->initialize();
+$hdrRequest = new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('GET', 'http://test/hdr-check'));
+$plainHeaders = $hdrEngine->responseHeaders();
+$requestHeaders = $hdrEngine->responseHeaders($hdrRequest);
+$t->same($plainHeaders, $requestHeaders, 'the guard request does not change the header set');
+$t->truthy($requestHeaders !== [], 'the default header set is non-empty');
+
+
 exit($t->failed === 0 ? 0 : 1);

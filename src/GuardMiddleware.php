@@ -107,7 +107,7 @@ final class GuardMiddleware implements MiddlewareInterface
             return;
         }
         $this->engine->cloudManager()?->refreshAsync(
-            array_values($config->blockCloudProviders),
+            $config->blockCloudProviders,
             $config->cloudIpRefreshInterval
         );
     }

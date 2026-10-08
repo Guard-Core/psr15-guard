@@ -26,7 +26,7 @@ Until `rennf93/guard-core-php` has a Packagist release, point Composer at its re
     "minimum-stability": "dev",
     "prefer-stable": true,
     "repositories": [
-        { "type": "vcs", "url": "https://github.com/rennf93/guard-core-php" }
+        { "type": "vcs", "url": "https://github.com/Guard-Core/guard-core-php" }
     ]
 }
 ```
@@ -97,5 +97,5 @@ $app->add($guard);
 
 ## Related Projects
 
-- `rennf93/guard-core-php`: https://github.com/rennf93/guard-core-php. The engine. `SecurityConfig`, `GuardEngine`, `GuardRequest`/`GuardResponse`, `HeaderBag`, `RequestState`, `RedisHandler`, and `GuardRedisException` live there, and every verdict originates there.
-- `rennf93/psr15-guard`: https://github.com/rennf93/psr15-guard. This repository, the PSR-15 adapter layer of the guard-core ecosystem.
+- `rennf93/guard-core-php`: https://github.com/Guard-Core/guard-core-php. The engine. `SecurityConfig`, `GuardEngine`, `GuardRequest`/`GuardResponse`, `HeaderBag`, `RequestState`, `RedisHandler`, and `GuardRedisException` live there, and every verdict originates there.
+- `rennf93/psr15-guard`: https://github.com/Guard-Core/psr15-guard. This repository, the PSR-15 adapter layer of the guard-core ecosystem.

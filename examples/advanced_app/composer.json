@@ -15,8 +15,8 @@
         }
     },
     "repositories": [
-        { "type": "vcs", "url": "https://github.com/rennf93/guard-core-php" },
-        { "type": "vcs", "url": "https://github.com/rennf93/psr15-guard" }
+        { "type": "vcs", "url": "https://github.com/Guard-Core/guard-core-php" },
+        { "type": "vcs", "url": "https://github.com/Guard-Core/psr15-guard" }
     ],
     "minimum-stability": "dev",
     "prefer-stable": true,

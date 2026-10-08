@@ -3,7 +3,7 @@ Guidance for AI agents (including Claude Code) working in this repository.
 
 ## Project Overview
 
-rennf93/psr15-guard (https://github.com/rennf93/psr15-guard) is a PSR-15 middleware adapter for guard-core-php. It translates any PSR-7 `ServerRequestInterface` into the guard-core engine and translates the engine's block verdicts back to PSR-7 responses. It works with Slim 4, Mezzio, Symfony PSR-15 bridges, or any PSR-7/PSR-15 stack.
+rennf93/psr15-guard (https://github.com/Guard-Core/psr15-guard) is a PSR-15 middleware adapter for guard-core-php. It translates any PSR-7 `ServerRequestInterface` into the guard-core engine and translates the engine's block verdicts back to PSR-7 responses. It works with Slim 4, Mezzio, Symfony PSR-15 bridges, or any PSR-7/PSR-15 stack.
 
 - Composer package `rennf93/psr15-guard`, type `library`, license MIT.
 - This repository contains NO security logic. Detection, rate limiting, bans, and verdicts all live in guard-core-php.
@@ -14,12 +14,12 @@ rennf93/psr15-guard (https://github.com/rennf93/psr15-guard) is a PSR-15 middlew
 
 ## Ecosystem Position
 
-- `rennf93/guard-core-php` (https://github.com/rennf93/guard-core-php) is the engine. It owns `SecurityConfig`, `GuardEngine`, the `GuardRequest`/`GuardResponse` contracts, `HeaderBag`, `RequestState`, `RedisHandler`, and `GuardRedisException`. Every check, verdict, and block response body originates there.
+- `rennf93/guard-core-php` (https://github.com/Guard-Core/guard-core-php) is the engine. It owns `SecurityConfig`, `GuardEngine`, the `GuardRequest`/`GuardResponse` contracts, `HeaderBag`, `RequestState`, `RedisHandler`, and `GuardRedisException`. Every check, verdict, and block response body originates there.
 - This package is the PSR-7/PSR-15 adapter for that engine: `GuardMiddleware` implements `MiddlewareInterface`, `PsrGuardRequest` implements `GuardRequest`, `ResponseTranslator` converts `GuardResponse` objects to `ResponseInterface`.
 - Composer constraint: `rennf93/guard-core-php: ^0.1.0` (composer.json `require`). `composer.lock` pins `v0.1.0` (source reference 89e8bd596257e607c427fc0cc26b80731cf80279, fetched from the GitHub VCS repository).
 - Repository configuration in composer.json, in order:
   1. Path repository `../guard-core-php`, marked `"canonical": false` (resolves when a sibling checkout of the core exists; non-canonical, so other sources win on conflict).
-  2. VCS fallback `https://github.com/rennf93/guard-core-php.git` (how fresh checkouts and CI actually resolve the core).
+  2. VCS fallback `https://github.com/Guard-Core/guard-core-php.git` (how fresh checkouts and CI actually resolve the core).
 - `minimum-stability: dev` with `prefer-stable: true`, required until the core has a Packagist distribution. The README documents the same setup for consumers of this package.
 
 ## Boundary Rules
@@ -45,7 +45,7 @@ This machine has NO `php` and NO `composer` binary. You cannot run the suite loc
 
 Local install path (per composer.json):
 
-1. Make guard-core-php resolvable: either check out the core at a sibling directory `../guard-core-php` (the path repository) or rely on the VCS fallback `https://github.com/rennf93/guard-core-php.git`.
+1. Make guard-core-php resolvable: either check out the core at a sibling directory `../guard-core-php` (the path repository) or rely on the VCS fallback `https://github.com/Guard-Core/guard-core-php.git`.
 2. `composer install` (the lock already pins guard-core-php v0.1.0).
 3. `composer lint`, then `composer test`.
 
@@ -167,5 +167,5 @@ README.md                             Install, usage, lifecycle, behavior notes
 
 ## Related Projects
 
-- `rennf93/guard-core-php`: https://github.com/rennf93/guard-core-php. The engine this adapter delegates to. `SecurityConfig`, `GuardEngine`, `GuardRequest`/`GuardResponse`, `HeaderBag`, `RequestState`, `RedisHandler`, and `GuardRedisException` live there. Resolved via the `../guard-core-php` path repository (canonical: false) with the VCS fallback `https://github.com/rennf93/guard-core-php.git`; CI checks out its `guard-core-port-php` branch.
+- `rennf93/guard-core-php`: https://github.com/Guard-Core/guard-core-php. The engine this adapter delegates to. `SecurityConfig`, `GuardEngine`, `GuardRequest`/`GuardResponse`, `HeaderBag`, `RequestState`, `RedisHandler`, and `GuardRedisException` live there. Resolved via the `../guard-core-php` path repository (canonical: false) with the VCS fallback `https://github.com/Guard-Core/guard-core-php.git`; CI checks out its `guard-core-port-php` branch.
 - `rennf93/psr15-guard`: this repository, the PSR-15 adapter layer of the guard-core ecosystem.

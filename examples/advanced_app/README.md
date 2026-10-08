@@ -4,7 +4,7 @@ Production-shaped guarded PSR-15 app: env-driven `SecurityConfig` engine
 tuning (`src/Config.php`), a router whose admin routes drive the engine's ban
 manager (`src/Routes.php`), an admin gate enforced by the engine pipeline, a
 per-endpoint rate limit, and a non-root multi-stage Docker build. It is the
-image published to `ghcr.io/rennf93/psr15-guard-example` by the repo's
+image published to `ghcr.io/guard-core/psr15-guard-example` by the repo's
 `container-release` workflow.
 
 Layout:

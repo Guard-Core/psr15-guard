@@ -58,7 +58,7 @@ jobs:
 
       - name: Tag and push to GHCR
         run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/psr15-guard-example"
+          IMAGE="ghcr.io/guard-core/psr15-guard-example"
           docker tag psr15-guard-advanced-app:local "${IMAGE}:latest"
           docker push "${IMAGE}:latest"
 

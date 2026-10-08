@@ -864,4 +864,27 @@ $mixedResolve = (new ReflectionClass($mixedMw))->getMethod('resolveRouteConfig')
 $t->same($anyMethod, $mixedResolve->invoke($mixedMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('POST', 'http://test/api/users'))), 'a longer bare pattern beats a shorter method-scoped one');
 $t->same(null, $mixedResolve->invoke($mixedMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('GET', 'http://test/other'))), 'no match attaches nothing');
 
+$t->section('decorator handler: the SecurityDecorator family rides the same resolver');
+$decoratorConfig = new SecurityConfig(enableRedis: false);
+$decorator = new \RenzoFranceschini\GuardCore\Decorators\SecurityDecorator($decoratorConfig);
+$decorator->requireHeaders(['X-Token' => 'required'])->decorate('GET /admin');
+$decorator->rateLimit(3, 60)->decorate('/throttled');
+$decoratorEngine = new GuardEngine(new SecurityConfig(enableRedis: false));
+$decoratorMw = new GuardMiddleware($decoratorEngine, $factory, $factory, decoratorHandler: $decorator);
+$t->same($decorator, $decoratorEngine->decoratorHandler(), 'the middleware wires the decorator handler into the engine');
+$noToken = $decoratorMw->process(psrRequest('/admin', '203.0.113.150', 'GET'), new RecordingHandler());
+$t->same(400, $noToken->getStatusCode(), 'the decorated route enforces its header through the pipeline');
+$withToken = $decoratorMw->process(psrRequest('/admin', '203.0.113.150', 'GET', headers: ['X-Token' => 'required']), new RecordingHandler());
+$t->same(200, $withToken->getStatusCode(), 'a conforming request passes the decorated route');
+$decoratorResolve = (new ReflectionClass($decoratorMw))->getMethod('resolveRouteConfig');
+$t->same(true, $decoratorResolve->invoke($decoratorMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('POST', 'http://ex.test/throttled'))) !== null, 'the decorator route map resolves like a hand-built one');
+
+$overrideDecorator = new \RenzoFranceschini\GuardCore\Decorators\SecurityDecorator(new SecurityConfig(enableRedis: false));
+$overrideDecorator->requireHttps()->decorate('/mixed');
+$explicit = new RouteConfig(maxRequestSize: 5);
+$overrideEngine = new GuardEngine(new SecurityConfig(enableRedis: false));
+$overrideMw = new GuardMiddleware($overrideEngine, $factory, $factory, routes: ['/mixed' => $explicit], decoratorHandler: $overrideDecorator);
+$overrideResolve = (new ReflectionClass($overrideMw))->getMethod('resolveRouteConfig');
+$t->same($explicit, $overrideResolve->invoke($overrideMw, new PsrGuardRequest(new Nyholm\Psr7\ServerRequest('GET', 'http://ex.test/mixed'))), 'an explicit route map entry wins a shared pattern over the decorator');
+
 exit($t->failed === 0 ? 0 : 1);

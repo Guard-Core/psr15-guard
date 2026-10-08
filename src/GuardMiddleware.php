@@ -11,6 +11,7 @@ use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Closure;
+use RenzoFranceschini\GuardCore\Decorators\SecurityDecorator;
 use RenzoFranceschini\GuardCore\Engine\GuardEngine;
 use RenzoFranceschini\GuardCore\GeoIp\CountryResolver;
 use RenzoFranceschini\GuardCore\Redis\GuardRedisException;
@@ -26,6 +27,9 @@ final class GuardMiddleware implements MiddlewareInterface
     /** @var list<array{method: ?string, path: string, config: RouteConfig}> most-specific-first */
     private array $sortedRoutes = [];
 
+    /** @var array<string, RouteConfig> pattern => config (decorator merges included) */
+    private readonly array $routes;
+
     /**
      * @param array<string, RouteConfig> $routes route pattern => config,
      *     resolved per request by path match and attached to the engine's
@@ -40,17 +44,32 @@ final class GuardMiddleware implements MiddlewareInterface
      *     RouteConfig geoRateLimits tiers; falls back to the engine
      *     config's geo_ip_handler when that carries one (the config keeps
      *     an injected handler only when country lists are configured)
+     * @param SecurityDecorator|null $decoratorHandler the engine decorator
+     *     family handler (the set_decorator_handler analog): its decorated
+     *     routes (route pattern keys and callable-endpoint route ids) are
+     *     merged under the explicit $routes map - an explicit entry wins a
+     *     shared pattern - and the handler is wired into the engine so
+     *     requests stamped with a route id resolve their config through it
      */
     public function __construct(
         private readonly GuardEngine $engine,
         ResponseFactoryInterface $responseFactory,
         StreamFactoryInterface $streamFactory,
-        private readonly array $routes = [],
+        array $routes = [],
         private readonly ?Closure $routeResolver = null,
         ?CountryResolver $geoRateLimitResolver = null,
-        ?object $agentHandler = null
+        ?object $agentHandler = null,
+        ?SecurityDecorator $decoratorHandler = null
     ) {
         $this->translator = new ResponseTranslator($responseFactory, $streamFactory);
+        if ($decoratorHandler !== null) {
+            $engine->setDecoratorHandler($decoratorHandler);
+            $decoratorRoutes = $decoratorHandler->routeConfigs();
+            if ($decoratorRoutes !== []) {
+                $routes = $routes === [] ? $decoratorRoutes : [...$decoratorRoutes, ...$routes];
+            }
+        }
+        $this->routes = $routes;
         $this->sortedRoutes = self::sortRoutesLongestFirst($this->routes);
         $this->wireGeoRateLimitResolver($geoRateLimitResolver);
         if ($agentHandler !== null) {

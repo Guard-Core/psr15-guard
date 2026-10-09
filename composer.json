@@ -5,7 +5,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
-        "rennf93/guard-core-php": "dev-master as 4.3.99",
+        "rennf93/guard-core-php": "^4.3.2",
         "psr/http-message": "^1.1|^2.0",
         "psr/http-factory": "^1.0",
         "psr/http-server-handler": "^1.0",

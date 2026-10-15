@@ -5,8 +5,8 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
-        "rennf93/psr15-guard": "^0.1.0",
-        "rennf93/guard-core-php": "^0.1.0",
+        "rennf93/psr15-guard": "dev-master",
+        "rennf93/guard-core-php": "^4.0.4 || dev-master",
         "laminas/laminas-diactoros": "^3.0"
     },
     "repositories": [

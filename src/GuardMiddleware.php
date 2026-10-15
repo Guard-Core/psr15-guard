@@ -15,6 +15,7 @@ use RenzoFranceschini\GuardCore\Decorators\SecurityDecorator;
 use RenzoFranceschini\GuardCore\Engine\GuardEngine;
 use RenzoFranceschini\GuardCore\GeoIp\CountryResolver;
 use RenzoFranceschini\GuardCore\Redis\GuardRedisException;
+use RenzoFranceschini\GuardCore\Request\HeaderBag;
 use RenzoFranceschini\GuardCore\Request\GuardResponse;
 use RenzoFranceschini\GuardCore\Routing\RouteConfig;
 
@@ -54,14 +55,14 @@ final class GuardMiddleware implements MiddlewareInterface
     public function __construct(
         private readonly GuardEngine $engine,
         ResponseFactoryInterface $responseFactory,
-        StreamFactoryInterface $streamFactory,
+        private readonly StreamFactoryInterface $streamFactory,
         array $routes = [],
         private readonly ?Closure $routeResolver = null,
         ?CountryResolver $geoRateLimitResolver = null,
         ?object $agentHandler = null,
         ?SecurityDecorator $decoratorHandler = null
     ) {
-        $this->translator = new ResponseTranslator($responseFactory, $streamFactory);
+        $this->translator = new ResponseTranslator($responseFactory, $this->streamFactory);
         if ($decoratorHandler !== null) {
             $engine->setDecoratorHandler($decoratorHandler);
             $decoratorRoutes = $decoratorHandler->routeConfigs();
@@ -160,7 +161,11 @@ final class GuardMiddleware implements MiddlewareInterface
      * the full body; return rules never modify the response), then the
      * engine's security-header set and the CORS verdict headers are merged
      * onto the outgoing response (CORS wins on a shared name, matching the
-     * reference _inject_cors_headers ordering).
+     * reference _inject_cors_headers ordering). The engine's
+     * customResponseModifier runs between the two, once, through
+     * GuardEngine::applyResponseModifier (the reference apply_modifier as
+     * the last step of the response pass, with the CORS headers applied
+     * after it).
      */
     private function finish(PsrGuardRequest $guardRequest, ResponseInterface $response): ResponseInterface
     {
@@ -185,8 +190,64 @@ final class GuardMiddleware implements MiddlewareInterface
         foreach ($this->engine->responseHeaders() as $name => $value) {
             $response = $response->withHeader($name, $value);
         }
+        $response = $this->applyModifier($response);
         foreach ($this->engine->corsResponseHeaders($guardRequest) as $name => $value) {
             $response = $response->withHeader($name, $value);
+        }
+
+        return $response;
+    }
+
+    /**
+     * Runs the engine's customResponseModifier over a pass-through
+     * response: the PSR-7 response is lent to the modifier as a
+     * GuardResponse (status, headers, body when the stream is seekable) and
+     * the result is merged back. Nothing is read or touched while no
+     * modifier is configured. Set-Cookie is left alone (a joined header
+     * line cannot carry several cookies), and an unchanged header keeps its
+     * original value list.
+     */
+    private function applyModifier(ResponseInterface $response): ResponseInterface
+    {
+        if ($this->engine->config()->customResponseModifier === null) {
+            return $response;
+        }
+        $stream = $response->getBody();
+        $body = null;
+        if ($stream->isSeekable()) {
+            $stream->rewind();
+            $body = $stream->getContents();
+            $stream->rewind();
+        }
+        $before = [];
+        foreach ($response->getHeaders() as $name => $values) {
+            if (strtolower($name) !== 'set-cookie') {
+                $before[strtolower($name)] = implode(', ', $values);
+            }
+        }
+        $modified = $this->engine->applyResponseModifier(
+            new GuardResponse($response->getStatusCode(), new HeaderBag($before), $body)
+        );
+
+        $after = $modified->headers()->all();
+        foreach ($before as $name => $value) {
+            if (!isset($after[$name])) {
+                $response = $response->withoutHeader($name);
+            }
+        }
+        foreach ($after as $name => $value) {
+            if (($before[$name] ?? null) !== $value) {
+                $response = $response->withHeader($name, $value);
+            }
+        }
+        if ($modified->statusCode() !== $response->getStatusCode()) {
+            $response = $response->withStatus($modified->statusCode());
+        }
+        if ($body !== null && $modified->body() !== null && $modified->body() !== $body) {
+            $response = $response->withBody($this->streamFactory->createStream($modified->body()));
+            if (($after['content-length'] ?? null) === ($before['content-length'] ?? null)) {
+                $response = $response->withoutHeader('Content-Length');
+            }
         }
 
         return $response;

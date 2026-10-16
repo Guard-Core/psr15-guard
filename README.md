@@ -263,7 +263,7 @@ PHP shared-nothing applies: construct `GuardEngine` (and therefore `GuardMiddlew
 ## Behavior notes
 
 - Fail-closed: if the engine throws, the middleware returns the engine's fail-closed response (`500 Security check failed`, honorably overridden by `customErrorResponses`) instead of letting the request through.
-- Bounded body read: the request body is scanned as a prefix of at most 256 KiB (`PsrGuardRequest::MAX_BODY_BYTES`, matching the engine's full-scan window). Payloads beyond the prefix, or signatures split across its boundary, are not detected.
+- Bounded body read: the request body is scanned as a prefix of at most 256 KiB (`PsrGuardRequest::MAX_BODY_BYTES`, matching the engine's full-scan window). Payloads beyond the prefix, or signatures split across its boundary, are not detected. The scan does not consume the body for the handler: a seekable stream is rewound to the position it had before the scan, and a non-seekable stream the engine read is replayed to the handler as a `php://temp` copy of the full body (the only case where the handler receives a request other than the original instance).
 - With `redisFailOpen: true` the middleware constructs and serves requests even when Redis is unreachable; with `redisFailOpen: false` construction fails closed.
 - Security headers and CORS: the adapter computes none of them. On a pass-through response it merges the engine's security header set, then the engine's `customResponseModifier` output, then the engine's CORS verdict headers (CORS last, so the CORS policy wins on a shared header name). Blocked responses are exact translations of the engine's verdict.
 

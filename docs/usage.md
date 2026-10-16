@@ -31,7 +31,9 @@ $response = $guard->process($request, $handler);
 ```
 
 On a block verdict the downstream handler is never called. On a clean pass the
-ORIGINAL PSR-7 request is forwarded untouched.
+ORIGINAL PSR-7 request is forwarded, with its body stream left at the position it had before the guard (the guard
+rewinds a seekable body after scanning it). The one exception is a non-seekable body that the engine read: that
+request is forwarded as a copy (`withBody()`) whose body holds the full, unaltered bytes.
 
 ## Verdicts
 

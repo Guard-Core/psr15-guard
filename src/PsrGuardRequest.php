@@ -23,6 +23,8 @@ final class PsrGuardRequest implements GuardRequest
 
     private bool $bodyTruncated = false;
 
+    private string $unrewindableConsumed = '';
+
     public function __construct(private readonly ServerRequestInterface $request)
     {
         $this->state = new RequestState();
@@ -93,6 +95,8 @@ final class PsrGuardRequest implements GuardRequest
 
         $buffer = '';
         $stream = $this->request->getBody();
+        $seekable = $stream->isSeekable();
+        $start = $seekable ? $stream->tell() : 0;
         while (strlen($buffer) < self::MAX_BODY_BYTES) {
             $chunk = $stream->read(min(self::READ_CHUNK_BYTES, self::MAX_BODY_BYTES - strlen($buffer)));
             if ($chunk === '') {
@@ -100,11 +104,27 @@ final class PsrGuardRequest implements GuardRequest
             }
             $buffer .= $chunk;
         }
-        $this->bodyTruncated = strlen($buffer) === self::MAX_BODY_BYTES && $stream->read(1) !== '';
+        $probe = strlen($buffer) === self::MAX_BODY_BYTES ? $stream->read(1) : '';
+        $this->bodyTruncated = $probe !== '';
+        if ($seekable) {
+            // Hand the stream back where the handler chain left it (normally 0).
+            $stream->seek($start);
+        } else {
+            $this->unrewindableConsumed = $buffer . $probe;
+        }
         $this->cachedBody = $buffer;
         $this->bodyRead = true;
 
         return $buffer;
+    }
+
+    /**
+     * Bytes the body read took from a stream that cannot be rewound, or ''
+     * when nothing was consumed (body never read, or the stream was rewound).
+     */
+    public function consumedFromUnrewindableStream(): string
+    {
+        return $this->unrewindableConsumed;
     }
 
     public function bodyWasTruncated(): bool

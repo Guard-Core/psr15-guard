@@ -94,6 +94,113 @@ final class RecordingHandlerWithResponse implements RequestHandlerInterface
     }
 }
 
+final class NonSeekableStream implements StreamInterface
+{
+    private int $pos = 0;
+
+    public function __construct(private readonly string $data)
+    {
+    }
+
+    public function __toString(): string
+    {
+        return substr($this->data, $this->pos);
+    }
+
+    public function close(): void
+    {
+    }
+
+    public function detach()
+    {
+        return null;
+    }
+
+    public function getSize(): ?int
+    {
+        return null;
+    }
+
+    public function tell(): int
+    {
+        return $this->pos;
+    }
+
+    public function eof(): bool
+    {
+        return $this->pos >= strlen($this->data);
+    }
+
+    public function isSeekable(): bool
+    {
+        return false;
+    }
+
+    public function seek(int $offset, int $whence = SEEK_SET): void
+    {
+        throw new \RuntimeException('not seekable');
+    }
+
+    public function rewind(): void
+    {
+        throw new \RuntimeException('not seekable');
+    }
+
+    public function isWritable(): bool
+    {
+        return false;
+    }
+
+    public function write(string $string): int
+    {
+        throw new \RuntimeException('not writable');
+    }
+
+    public function isReadable(): bool
+    {
+        return true;
+    }
+
+    public function read(int $length): string
+    {
+        $chunk = substr($this->data, $this->pos, $length);
+        $this->pos += strlen($chunk);
+
+        return $chunk;
+    }
+
+    public function getContents(): string
+    {
+        return $this->read(strlen($this->data));
+    }
+
+    public function getMetadata(?string $key = null)
+    {
+        return $key === null ? [] : null;
+    }
+}
+
+final class BodyRecordingHandler implements RequestHandlerInterface
+{
+    public int $calls = 0;
+
+    public ?ServerRequestInterface $seen = null;
+
+    public string $contents = '';
+
+    public string $asString = '';
+
+    public function handle(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->calls++;
+        $this->seen = $request;
+        $this->contents = $request->getBody()->getContents();
+        $this->asString = (string) $request->getBody();
+
+        return (new Psr17Factory())->createResponse(200);
+    }
+}
+
 final class ThrowingUriRequest implements ServerRequestInterface
 {
     public function __construct(private readonly ServerRequestInterface $inner)
@@ -466,6 +573,42 @@ $t->same(400, $hit->getStatusCode(), 'attack inside a mid-size body is detected'
 $t->same('Suspicious activity detected', (string) $hit->getBody(), 'mid-size attack body exact');
 $clean = $middleware->process(psrRequest('/submit', '203.0.113.33', 'POST', body: $filler), new RecordingHandler());
 $t->same(200, $clean->getStatusCode(), 'clean mid-size body passes');
+
+$t->section('downstream handler still reads the full body the guard scanned');
+[$middleware] = makeStack(new SecurityConfig(enableRedis: false));
+$bodyRequest = static fn (StreamInterface $stream, string $ip): ServerRequestInterface => (new ServerRequest('POST', 'http://ex.test/submit', [], null, '1.1', ['REMOTE_ADDR' => $ip]))->withBody($stream);
+$json = '{"name":"renzo","comment":"hello"}';
+$handler = new BodyRecordingHandler();
+$t->same(200, $middleware->process($bodyRequest(streamFromString($json), '203.0.113.60'), $handler)->getStatusCode(), 'clean JSON POST passes');
+$t->same($json, $handler->contents, 'downstream getContents() returns the sent body');
+$t->same($json, $handler->asString, 'downstream (string) body returns the sent body');
+foreach ([['over the cap', PsrGuardRequest::MAX_BODY_BYTES + 5000, '203.0.113.61'], ['exactly the cap', PsrGuardRequest::MAX_BODY_BYTES, '203.0.113.62']] as [$label, $size, $ip]) {
+    $big = substr(str_repeat('lorem ipsum ', (int) ceil($size / 12)), 0, $size);
+    $handler = new BodyRecordingHandler();
+    $t->same(200, $middleware->process($bodyRequest(streamFromString($big), $ip), $handler)->getStatusCode(), "{$label}: passes");
+    $t->same(true, $big === $handler->contents, "{$label}: downstream receives every byte");
+    $t->same(true, $big === $handler->asString, "{$label}: downstream (string) body is complete");
+}
+$handler = new BodyRecordingHandler();
+$offset = streamFromString('PREFIX' . $json);
+$offset->seek(6);
+$middleware->process($bodyRequest($offset, '203.0.113.63'), $handler);
+$t->same($json, $handler->contents, 'seekable stream at a non-zero position is restored to that position');
+foreach ([['non-seekable small', $json, '203.0.113.64'], ['non-seekable over the cap', str_repeat('lorem ipsum ', 25000), '203.0.113.65'], ['non-seekable exactly the cap', str_repeat('a', PsrGuardRequest::MAX_BODY_BYTES), '203.0.113.66']] as [$label, $data, $ip]) {
+    $handler = new BodyRecordingHandler();
+    $t->same(200, $middleware->process($bodyRequest(new NonSeekableStream($data), $ip), $handler)->getStatusCode(), "{$label}: passes");
+    $t->same(true, $data === $handler->contents, "{$label}: downstream receives the full body");
+    $t->same(true, $data === $handler->asString, "{$label}: downstream (string) body is complete");
+}
+$handler = new BodyRecordingHandler();
+$t->same(400, $middleware->process($bodyRequest(streamFromString('comment=<script>alert(1)</script>'), '203.0.113.67'), $handler)->getStatusCode(), 'attack body is still blocked');
+$t->same(0, $handler->calls, 'handler is not called on a block');
+[$noScan] = makeStack(new SecurityConfig(enableRedis: false, enablePenetrationDetection: false));
+$handler = new BodyRecordingHandler();
+$original = $bodyRequest(new NonSeekableStream($json), '203.0.113.68');
+$noScan->process($original, $handler);
+$t->same($original, $handler->seen, 'body never read: the identical original request instance goes downstream');
+$t->same($json, $handler->contents, 'body never read: the non-seekable stream is untouched');
 
 $t->section('whitelist through the full stack');
 $hooks = [];

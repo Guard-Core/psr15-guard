@@ -21,6 +21,8 @@ use RenzoFranceschini\GuardCore\Routing\RouteConfig;
 
 final class GuardMiddleware implements MiddlewareInterface
 {
+    private const REPLAY_CHUNK_BYTES = 65536;
+
     private readonly ResponseTranslator $translator;
 
     private ?object $agentHandler = null;
@@ -147,7 +149,31 @@ final class GuardMiddleware implements MiddlewareInterface
             return $this->translator->translate($blocked);
         }
 
-        return $this->finish($guardRequest, $handler->handle($request));
+        return $this->finish($guardRequest, $handler->handle($this->withReplayableBody($guardRequest, $request)));
+    }
+
+    /**
+     * A seekable body is rewound by PsrGuardRequest, so the original request
+     * goes downstream. Bytes taken from a non-seekable stream cannot be put
+     * back: the handler gets a copy of the request whose body is those bytes
+     * followed by the rest of the original stream, in a PSR-17 php://temp
+     * stream filled in bounded chunks.
+     */
+    private function withReplayableBody(PsrGuardRequest $guardRequest, ServerRequestInterface $request): ServerRequestInterface
+    {
+        $consumed = $guardRequest->consumedFromUnrewindableStream();
+        if ($consumed === '') {
+            return $request;
+        }
+        $source = $request->getBody();
+        $replay = $this->streamFactory->createStreamFromFile('php://temp', 'r+b');
+        $replay->write($consumed);
+        while (($chunk = $source->read(self::REPLAY_CHUNK_BYTES)) !== '') {
+            $replay->write($chunk);
+        }
+        $replay->rewind();
+
+        return $request->withBody($replay);
     }
 
     /**

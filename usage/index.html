@@ -615,7 +615,9 @@ hardwired.</p>
 <span class="x">$response = $guard-&gt;process($request, $handler);</span>
 </code></pre></div>
 <p>On a block verdict the downstream handler is never called. On a clean pass the
-ORIGINAL PSR-7 request is forwarded untouched.</p>
+ORIGINAL PSR-7 request is forwarded, with its body stream left at the position it had before the guard (the guard
+rewinds a seekable body after scanning it). The one exception is a non-seekable body that the engine read: that
+request is forwarded as a copy (<code>withBody()</code>) whose body holds the full, unaltered bytes.</p>
 <h2 id="verdicts">Verdicts</h2>
 <p>When the engine returns a block verdict, <code>ResponseTranslator</code> copies the
 verdict status code, body, and headers onto a PSR-7 response, and never calls

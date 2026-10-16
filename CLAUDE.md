@@ -47,7 +47,7 @@ Use the host `php` and `composer` when present (`make` falls back to Docker `php
 
 Redis-backed assertions need a reachable Redis: `REDIS_HOST` (default 127.0.0.1) and `REDIS_PORT` (default 6379). Point `REDIS_PORT` at a private `redis-server` when you do not want to touch a shared instance. The suite keys everything under a random `REDIS_PREFIX` and cleans up after itself.
 
-The CI path (from `.github/workflows/ci.yml`, same install, lint and test steps in `release.yml`):
+The CI path (from `.github/workflows/ci.yml`, same install, lint and test steps in `scheduled-lint.yml`):
 
 1. Set up PHP from the matrix (8.2, 8.3, or 8.4) with the `mbstring` extension, coverage none.
 2. `composer install --no-interaction --no-progress`.
@@ -80,7 +80,7 @@ The CI path (from `.github/workflows/ci.yml`, same install, lint and test steps 
 .github/coverage-runner.php           100% line coverage gate (php-code-coverage) used by CI
 .github/scripts/bump_version.py       CHANGELOG scaffold used by make bump-version
 .github/workflows/ci.yml              CI: test matrix php 8.2/8.3/8.4 + redis service, composer audit, 100% coverage
-.github/workflows/release.yml         Release Gate: test matrix and composer audit on v* tags (no coverage job)
+.github/workflows/release.yml         Release Gate: on v* tags, requires green ci.yml, static-analysis.yml and live-smoke.yml on the tagged commit
 .github/workflows/static-analysis.yml PHPStan level 8 over src/ (push, PR, weekly cron)
 .github/workflows/semgrep.yml         Semgrep p/security-audit and p/secrets over src/
 .github/workflows/scheduled-lint.yml  Weekly cron (Mon 04:00 UTC): php -l sweep + composer audit

@@ -3,6 +3,23 @@ Release Notes
 
 ___
 
+v1.6.1 (2026-10-17)
+-------------------
+
+The request body fix: a handler behind the guard reads the full request body again (v1.6.1)
+-------------------------------------------------------------------------------------------
+
+### Fixed
+
+- **A downstream handler got an empty request body.** `PsrGuardRequest::body()` read the PSR-7 body stream forward and left it at end of stream, and the middleware hands the original request to the handler, so every request that passed the guard reached its handler with a body that `getBody()->getContents()` or a `read()` loop returned as an empty string. Any PSR-15 stack whose handlers or body parsers read the body that way was affected, including Slim apps through `slim-guard`. Reads through `(string) $request->getBody()` were not affected, because a string cast rewinds the stream. A seekable body is now restored to the position it had before the scan (normally 0), and a non-seekable body the engine read is forwarded as a `php://temp` copy holding the bytes already read plus the rest of the stream, copied in 64 KiB chunks so a large body is never held as one string. The 256 KiB scan window (`MAX_BODY_BYTES`) is unchanged, and block verdicts are unchanged.
+
+### Behavior to know before upgrading
+
+- The handler receives the original request instance, except when the body stream is non-seekable and the engine read it. In that case it receives a copy made with `withBody()` whose body is the replayed `php://temp` stream. If the engine never reads the body (scanning off, or a block before the body stage), nothing is read and the original request is passed on untouched.
+- No engine floor change: this release still requires guard-core-php ^4.4.0.
+
+___
+
 v1.6.0 (2026-10-16)
 -------------------
 

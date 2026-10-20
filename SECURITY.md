@@ -2,19 +2,18 @@
 
 ## Supported Versions
 
-We currently provide security updates for the following versions of PSR-15 Guard:
+I provide security updates for the following versions of PSR-15 Guard:
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.2.x | :white_check_mark: |
-| 1.1.x | :white_check_mark: |
-| < 1.1.0 | :x:              |
+| Version | Supported |
+| ------- | --------- |
+| 1.x | :white_check_mark: bug and security fixes |
+| 0.x | :white_check_mark: security fixes only |
 
 ## Reporting a Vulnerability
 
-We take the security of PSR-15 Guard seriously. If you believe you've found a security vulnerability, please follow these steps:
+I take the security of PSR-15 Guard seriously. If you believe you've found a security vulnerability, please follow these steps:
 
-1. **Do not disclose the vulnerability publicly** until it has been addressed by the maintainers.
+1. **Do not disclose the vulnerability publicly** until I have fixed it.
 2. **Report the vulnerability through GitHub's security advisory feature**:
    - Go to the [Security tab](https://github.com/Guard-Core/psr15-guard/security/advisories) of the PSR-15 Guard repository
    - Click on "New draft security advisory"
@@ -29,7 +28,7 @@ We take the security of PSR-15 Guard seriously. If you believe you've found a se
    - Affected versions
    - Any potential mitigations or workarounds
 
-The maintainers will acknowledge your report within 48 hours and provide a detailed response within 7 days, including the next steps in handling the vulnerability.
+I will acknowledge your report within 48 hours and send a detailed response within 7 days, including the next steps in handling the vulnerability.
 
 ## Security Considerations
 

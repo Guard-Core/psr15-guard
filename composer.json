@@ -3,6 +3,14 @@
     "description": "PSR-15 middleware adapter for guard-core-php: translates PSR-7 server requests to the guard-core engine and block verdicts back to PSR-7 responses",
     "type": "library",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "Renzo Franceschini",
+            "email": "rennf93@guard-core.com",
+            "homepage": "https://github.com/rennf93",
+            "role": "Maintainer"
+        }
+    ],
     "require": {
         "php": "^8.2",
         "rennf93/guard-core-php": "^4.4.0",
